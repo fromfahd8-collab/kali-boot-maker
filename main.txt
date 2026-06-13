@@ -1,0 +1,194 @@
+import os
+import sys
+import subprocess
+import shutil
+import urllib.request
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+
+def is_admin():
+    try:
+        return os.getuid() == 0
+    except AttributeError:
+        import ctypes
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+
+if not is_admin():
+    import ctypes
+    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+    sys.exit()
+
+class RufusStyleKaliMaker(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Kali ISO F12 Boot & Dynamic Persistence Maker")
+        self.geometry("580x460")
+        self.resizable(False, False)
+        
+        self.selected_drive = tk.StringVar()
+        self.iso_path = tk.StringVar()
+        self.persistence_size_mb = tk.IntVar(value=512)
+        
+        self.create_widgets()
+        
+    def create_widgets(self):
+        lbl_title = tk.Label(self, text="مساعد تثبيت كالي ISO مع التحكم في الـ Persistence (UEFI F12)", font=("Arial", 11, "bold"))
+        lbl_title.pack(pady=15)
+        
+        frame_drive = tk.Frame(self)
+        frame_drive.pack(pady=8, fill='x', padx=20)
+        lbl_drive = tk.Label(frame_drive, text="اختر البارتيشن (الـ C محظور تلقائياً):", font=("Arial", 10))
+        lbl_drive.pack(side='left', padx=5)
+        
+        self.combo_drives = ttk.Combobox(frame_drive, textvariable=self.selected_drive, state="readonly", width=15)
+        self.combo_drives.pack(side='left', padx=5)
+        self.refresh_drives()
+        
+        frame_iso = tk.Frame(self)
+        frame_iso.pack(pady=8, fill='x', padx=20)
+        lbl_iso = tk.Label(frame_iso, text="اختر ملف Kali ISO:", font=("Arial", 10))
+        lbl_iso.pack(side='left', padx=5)
+        
+        self.ent_iso = tk.Entry(frame_iso, textvariable=self.iso_path, width=28, state="readonly")
+        self.ent_iso.pack(side='left', padx=5)
+        btn_browse = tk.Button(frame_iso, text="تصفح...", command=self.browse_iso)
+        btn_browse.pack(side='left', padx=5)
+        
+        self.frame_pers = tk.LabelFrame(self, text=" حجم التخزين الدائم (Persistence Size) ", font=("Arial", 9, "bold"), padx=10, pady=10)
+        self.frame_pers.pack(pady=15, fill='x', padx=20)
+        
+        self.lbl_slider_val = tk.Label(self.frame_pers, text="الحجم المحدد: 512 MB", font=("Arial", 10, "bold"), fg="green")
+        self.lbl_slider_val.pack()
+        
+        self.slider_persistence = tk.Scale(self.frame_pers, from_=0, to=4000, orient="horizontal", variable=self.persistence_size_mb, command=self.update_slider_label, state="disabled")
+        self.slider_persistence.pack(fill='x', expand=True, pady=5)
+        
+        self.lbl_info = tk.Label(self.frame_pers, text="* يرجى اختيار البارتيشن وملف الـ ISO أولاً لحساب المساحة المتاحة بدقة.", font=("Arial", 8, "italic"), fg="gray")
+        self.lbl_info.pack()
+
+        self.lbl_status = tk.Label(self, text="الحالة: جاهز لتجهيز البوت الذكي والـ Persistence", fg="blue", font=("Arial", 10, "italic"))
+        self.lbl_status.pack(pady=10)
+        
+        btn_start = tk.Button(self, text="تثبيت بنظام الأيزو المخفي + الـ Persistence", bg="#1a73e8", fg="white", font=("Arial", 11, "bold"), width=35, command=self.start_process)
+        btn_start.pack(pady=10)
+
+    def refresh_drives(self):
+        import string
+        drives = []
+        for letter in string.ascii_uppercase:
+            if letter == 'C': continue
+            if os.path.exists(f"{letter}:\\"):
+                try:
+                    total, _, _ = shutil.disk_usage(f"{letter}:\\")
+                    gb_size = total // (2**30)
+                    drives.append(f"{letter}: ({gb_size} GB)")
+                except: pass
+        self.combo_drives['values'] = drives
+        if drives: 
+            self.combo_drives.current(0)
+            self.combo_drives.bind("<<ComboboxSelected>>", lambda e: self.calculate_available_space())
+            
+    def browse_iso(self):
+        file_path = filedialog.askopenfilename(filetypes=[("ISO Files", "*.iso")])
+        if file_path: 
+            self.iso_path.set(file_path)
+            self.calculate_available_space()
+            
+    def update_slider_label(self, val):
+        self.lbl_slider_val.config(text=f"الحجم المحدد: {val} MB")
+
+    def calculate_available_space(self):
+        drive_info = self.selected_drive.get()
+        iso = self.iso_path.get()
+        
+        if drive_info and iso:
+            drive_letter = drive_info.split(":")
+            try:
+                total, _, _ = shutil.disk_usage(f"{drive_letter}:\\")
+                iso_size = os.getsize(iso)
+                available_bytes = total - iso_size - (100 * 1024 * 1024)
+                available_mb = available_bytes // (1024 * 1024)
+                
+                if available_mb <= 0:
+                    self.lbl_info.config(text="خطأ: مساحة البارتيشن أصغر من حجم ملف الأيزو!", fg="red")
+                    self.slider_persistence.config(state="disabled")
+                    return
+                
+                max_persistence = min(4096, available_mb)
+                self.slider_persistence.config(state="normal", from_=0, to=max_persistence)
+                self.persistence_size_mb.set(max_persistence)
+                self.lbl_slider_val.config(text=f"الحجم المحدد: {max_persistence} MB")
+                self.lbl_info.config(text=f"مسموح لك بالاختيار من 0 إلى {max_persistence} MB كحد أقصى متاح.", fg="black")
+            except Exception as e:
+                pass
+
+    def log(self, text):
+        self.lbl_status.config(text=f"الحالة: {text}")
+        self.update_idletasks()
+
+    def start_process(self):
+        drive_info = self.selected_drive.get()
+        iso = self.iso_path.get()
+        chosen_mb = self.persistence_size_mb.get()
+        
+        if not drive_info or not iso:
+            messagebox.showerror("خطأ", "برجاء اختيار البارتيشن وملف الـ ISO أولاً!")
+            return
+            
+        drive_letter = drive_info.split(":")
+        confirm = messagebox.askyesno("تأكيد", f"هل أنت متأكد من تهيئة البارتيشن {drive_letter}:؟\nسيتم حجز {chosen_mb} MB للـ Persistence.")
+        if not confirm: return
+            
+        try:
+            self.log("جاري تهيئة البارتيشن بصيغة FAT32...")
+            subprocess.run(f"format {drive_letter}: /fs:FAT32 /q /y", shell=True, check=True, stdout=subprocess.DEVNULL)
+            
+            self.log("جاري نسخ ملف كالي ISO إلى البارتيشن...")
+            shutil.copy(iso, f"{drive_letter}:\\kali-live.iso")
+            
+            self.log("جاري بناء محاكي البوت الـ EFI للأيزو...")
+            os.makedirs(f"{drive_letter}:\\EFI\\BOOT", exist_ok=True)
+            
+            grub_cfg = f"""
+            set timeout=5
+            set default=0
+            menuentry "Kali Linux Live ISO with Persistence (F12 Only)" {{
+                set isofile="/kali-live.iso"
+                loopback loop $isofile
+                linux (loop)/live/vmlinuz boot=live findiso=$isofile persistence persistence-label=persistence noeject quiet splash
+                initrd (loop)/live/initrd.img
+            }}
+            """
+            with open(f"{drive_letter}:\\EFI\\BOOT\\grub.cfg", "w", encoding="utf-8") as f:
+                f.write(grub_cfg)
+                
+            if chosen_mb > 0:
+                self.log(f"جاري حجز مساحة الـ Persistence بحجم {chosen_mb} MB...")
+                persistence_bytes = chosen_mb * 1024 * 1024
+                persistence_path = f"{drive_letter}:\\persistence.dat"
+                subprocess.run(f'fsutil file createnew "{persistence_path}" {persistence_bytes}', shell=True, check=True, stdout=subprocess.DEVNULL)
+            
+            self.log("جاري تسجيل الإقلاع المخفي في الـ UEFI لـ F12 فقط...")
+            subprocess.run(f'bcdedit /set {{fwbootmgr}} displayorder {{bootmgr}} /addfirst', shell=True, check=True)
+            
+            create_entry = subprocess.run(f'bcdedit /create /d "Kali ISO Live with Persistence" /application osloader', shell=True, capture_output=True, text=True, check=True)
+            output = create_entry.stdout
+            
+            import re
+            guid_match = re.search(r'\{[a-fA-A0-9\-]+\}', output)
+            if guid_match:
+                guid = guid_match.group(0)
+                subprocess.run(f'bcdedit /set {guid} device partition={drive_letter}:', shell=True, check=True)
+                subprocess.run(f'bcdedit /set {guid} osdevice partition={drive_letter}:', shell=True, check=True)
+                subprocess.run(f'bcdedit /set {guid} path \\EFI\\BOOT\\BOOTX64.EFI', shell=True, check=True)
+            
+            self.log("اكتملت العملية بنجاح!")
+            messagebox.showinfo("نجاح كامل وطاغي", f"تم التثبيت بنجاح ذكي!\nالحجم المقتطع للـ Persistence هو {chosen_mb} MB بالملي.\nكالي مخفي تماماً وسيفتح فقط عبر F12 بعد تحويل الهارد لـ GPT والـ UEFI.")
+            
+        except Exception as e:
+            self.log("فشلت العملية!")
+            messagebox.showerror("خطأ", str(e))
+
+if __name__ == "__main__":
+    app = RufusStyleKaliMaker()
+    app.mainloop()
