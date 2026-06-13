@@ -12,7 +12,7 @@ jobs:
     - name: Install PyInstaller
       run: pip install pyinstaller
     - name: Build EXE with PyInstaller
-      run: pyinstaller --onefile --noconsole main.py
+      run: pyinstaller --onefile --noconsole main.txt
     - name: Upload Finished EXE
       uses: actions/upload-artifact@v4
       with:
